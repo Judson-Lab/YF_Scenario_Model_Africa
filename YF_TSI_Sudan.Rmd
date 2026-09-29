@@ -1,0 +1,189 @@
+---
+title: "YF_TSI_Sudan"
+output: html_document
+date: "2026-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+sudan_climate <- read.csv("sudan_outbreak_temp.csv")
+```
+
+```{r}
+sudan_climate <- sudan_climate %>%
+  rename(T = avg_t)
+```
+
+
+```{r}
+#TSI
+# Based on Gaythorpe et al. / Mordecai et al. parameters for Aedes aegypti
+calculate_tsi <- function(temp) {
+
+# Biting rate (a) 
+  
+a_c    <- 0.000272  # Scaling constant
+a_Tmin <- 13.35     # Thermal minimum 
+a_Tmax <- 40.13     # Thermal maximum
+
+# Biting rate (a) calculation
+a <- a_c * temp * (temp - a_Tmin) * sqrt(pmax(0, a_Tmax - temp)) #Brière thermal response
+
+# Use the variables for the cutoff to ensure consistency
+a <- ifelse(temp > a_Tmin & temp < a_Tmax, a, 0)
+  
+
+
+# Mortality (mu) - 1/lifespan
+
+mu_c    <- 0.148 #Mordecai 2017
+mu_Tmin <- 9.16
+mu_Tmax <- 37.73
+
+lf <- mu_c * (temp - mu_Tmin) * (mu_Tmax - temp) #quadratic thermal response
+mu <- 1 / pmax(lf, 1) #provide floor, avoid dividing by zero
+
+
+#PDR or Incubation rate (1/EIP)
+c_eip <- 0.0001
+tmin_eip <- 17.67
+tmax_eip <- 42.1
+
+# Calculate the Rate (PDR) or sigma_v
+sigma_v = c_eip * temp * (temp - tmin_eip) * sqrt(pmax(0, tmax_eip - temp)) #Brière thermal response
+sigma_v = ifelse(temp <= tmin_eip | temp >= tmax_eip, 0, sigma_v)
+
+
+# Total TSI
+tsi_val <- ifelse(sigma_v > 0 & a > 0, (a^2 * exp(-mu / sigma_v)) / mu, 0)
+  
+ # Return all components for graphing
+  return(data.frame(
+    a = a,
+    mu = mu,
+    sigma_v = sigma_v,
+    TSI = pmax(tsi_val, 0)
+  ))
+}
+
+```
+
+
+```{r}
+# Use rowwise to apply the function to each temperature value 'T'
+sudan_TSI <- sudan_climate %>%
+  rowwise() %>%
+  reframe(date = date, T = T, calculate_tsi(T))
+
+# View the first few rows to confirm columns (a, mu, TSI) are added
+head(sudan_TSI)
+    ```
+    
+    
+```{r}
+library(scales)
+library(lubridate)
+```
+
+
+
+
+```{r}
+sudan_TSI %>%
+  # 1. Convert the character column to a real Date object
+  mutate(date = ymd(date)) %>% 
+  select(date, a, mu, sigma_v) %>%
+  pivot_longer(-date, names_to = "Component", values_to = "Value") %>%
+  ggplot(aes(x = date, y = Value, color = Component)) +
+  geom_line() +
+  facet_wrap(~Component, scales = "free_y", ncol = 1) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %d, %Y"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(title = "Biological Drivers of TSI", x = "Date")
+```
+
+```{r}
+sudan_TSI_plot <- sudan_TSI %>%
+  # 1. Convert date to actual Date class to ensure lines connect correctly
+  mutate(date = ymd(date)) %>% 
+  select(date, a, mu, sigma_v) %>%
+  pivot_longer(-date, names_to = "Component", values_to = "Value") %>%
+  ggplot(aes(x = date, y = Value, color = Component)) +
+  # 2. Add the line first
+  geom_line(linewidth = 0.5) + 
+  # 3. Add the points on top
+  geom_point(size = 2) + 
+  facet_wrap(~Component, scales = "free_y", ncol = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none" # Optional: hide legend since facets are labeled
+  ) +
+  labs(title = "Biological Drivers of TSI", x = "Date", y = "Value")
+```
+
+```{r}
+plot(sudan_TSI_plot)
+```
+
+```{r}
+#Save the plot as a TIFF
+ggsave(
+  filename = "sudan_TSI_components.tiff",
+  plot = sudan_TSI_plot,
+  width = 8,       # Width in inches
+  height = 10,     # Height in inches (tall because of 3 facets)
+  dpi = 300,       
+  bg = "white"
+)
+```
+
+
+
+```{r}
+#Graph the TSI (Transmission Suitability)
+sudan_TSI_plot2 <-sudan_TSI %>%
+  mutate(date = ymd(date)) %>% 
+  ggplot(aes(x = date, y = TSI)) +  
+  geom_line(color = "firebrick", linewidth = 1) +
+  labs(title = "Yellow Fever Transmission Suitability (TSI)",
+       subtitle = "Savannah Climate: Calculated from Aedes aegypti parameters",
+       y = "Index Value", x = "Date") +
+  theme_minimal()
+```
+
+```{r}
+plot(sudan_TSI_plot2)
+```
+
+
+```{r}
+#Save the plot as a TIFF
+ggsave(
+  filename = "savannah_TSI.tiff",
+  plot = savannah_TSI_plot2,
+  width = 8,       # Width in inches
+  height = 6,     # Height in inches
+  dpi = 300,       
+  bg = "white"
+)
+```
+
+
+```{r}
+save(sudan_TSI, file = "sudan_TSI.RData")
+```
