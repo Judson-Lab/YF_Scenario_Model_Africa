@@ -1,0 +1,1629 @@
+---
+title: "YF Pomp Model"
+author: "Seth Judson/Jeff Pennington"
+date: "2026-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Simple SEIR -> POMP Skeleton
+
+Deterministic models are possible to execute within POMP, but you need to use
+what's known as a pomp skeleton
+
+
+
+```{r libraries, echo=FALSE}
+library(pomp)
+
+# for the hypercube
+library(lhs)
+
+# for plotting
+library(dplyr)
+library(cowplot)
+library(grid)
+
+# for posterior analysis
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(viridis)
+
+# for parrallelization
+library(parallel)
+```
+
+## Ghana Onset Data
+
+We pull the date of onset from the Savannah, Ghana data to get the number of 
+symptomatic cases, which we are using as a proxy for newly symptomatic YF cases
+
+```{r ghana-parse-savannah-data, eval=TRUE}
+
+# Country specific variables
+country = "ghana"
+region.pop = 653266
+vacc_delay = 22
+vacc_cov = 0.7
+
+if (!exists("YF2021_2022_savannah")) {
+  cat("Loading the Savannah case data\n")
+  load("YF2021_2022_savannah_date.RData")
+} else {
+  cat("Case data already loaded\n")
+}
+
+column = "DateOfOnset"
+# column = "DateSeenHealthFacility"
+
+presenting_dates = YF2021_2022_savannah_date[[column]]
+
+tab_all_dates <- function(x) {
+  stopifnot(inherits(x, "Date"))
+  
+  # counts for dates that appear
+  counts <- table(x)                 # names are "yyyy-mm-dd" as character
+  counts <- as.integer(counts)
+  names(counts) <- names(table(x))
+  
+  # full date range (includes dates not present)
+  full <- seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), by = "day")
+  out <- integer(length(full))
+  names(out) <- as.character(full)
+  
+  # fill observed counts into the full vector
+  out[names(counts)] <- counts
+  
+  out
+}
+
+d <- tab_all_dates(presenting_dates)
+
+blank.count = 1
+
+onset_data = c(rep(0, blank.count), d, rep(0, 365-length(d)-blank.count))
+
+#Load TSI (temperature suitability index) components
+load("savannah_TSI.RData")
+
+# Data Manipulation
+# 1. Convert the 'date' column to actual Date objects
+# (Ensure the format matches your data, e.g., "%Y-%m-%d")
+savannah_TSI$date <- as.Date(savannah_TSI$date)
+
+# 2. Re-define the start date (now that the column is fixed)
+start_date <- min(savannah_TSI$date)
+
+# 3. NOW calculate the index
+# This will now produce numbers (0, 31, 61...) instead of an error
+savannah_TSI$time_idx <- as.numeric(savannah_TSI$date - start_date)
+
+#Step function for temperature dependent parameters
+# Ensure your data is sorted by date/time_idx
+savannah_TSI <- savannah_TSI[order(savannah_TSI$time_idx), ]
+
+# Create the step functions
+# f = 0 means: "For any time t between 0 and 31, use the value at 0."
+# rule = 2 means: "If t goes past the last date, just keep using the last value."
+
+mu_step_fun <- approxfun(x = savannah_TSI$time_idx, 
+                         y = savannah_TSI$mu, 
+                         method = "constant", 
+                         f = 0, 
+                         rule = 2)
+
+a_step_fun <- approxfun(x = savannah_TSI$time_idx, 
+                        y = savannah_TSI$a, 
+                        method = "constant", 
+                        f = 0, 
+                        rule = 2)
+
+sigma_step_fun <- approxfun(x = savannah_TSI$time_idx, 
+                            y = savannah_TSI$sigma_v,
+                            method = "constant", 
+                            f = 0, 
+                            rule = 2)
+```
+
+## Sudan Onset Data
+
+We pull the date of onset from the South Sudan data to get the number of symptomatic
+cases, which we are using as a proxy for newly symptomatic YF cases
+
+```{r parse-sudan-data, eval=FALSE}
+
+# Country specific variables
+country = "sudan"
+region.pop = 663235
+vacc_delay = 61
+vacc_cov = 0.5
+
+if (!exists("YF2023_sudan")) {
+  cat("Loading the Sudan case data\n")
+  load("YF2023_sudan.RData")
+} else {
+  cat("Case data already loaded\n")
+}
+
+YF2023_sudan['combined'] = YF2023_sudan['cases_dead'] + YF2023_sudan['cases_alive']
+
+column = "combined"
+
+# The Savannah data is the date of presentation, while the Sudan data is the count
+# per day, in order.
+
+blank.count = 1
+
+raw_onset_data = unlist(YF2023_sudan[column])
+
+onset_data = c(rep(0, blank.count), raw_onset_data, rep(0, 365-length(raw_onset_data)-blank.count))
+
+#Load TSI (temperature suitability index) components
+load("sudan_TSI.RData")
+
+# 1. Convert the 'date' column to actual Date objects
+# (Ensure the format matches your data, e.g., "%Y-%m-%d")
+sudan_TSI$date <- as.Date(sudan_TSI$date)
+
+# 2. Re-define the start date (now that the column is fixed)
+start_date <- min(sudan_TSI$date)
+
+# 3. NOW calculate the index
+# This will now produce numbers (0, 31, 61...) instead of an error
+sudan_TSI$time_idx <- as.numeric(sudan_TSI$date - start_date)
+
+# Check the result
+head(sudan_TSI$time_idx)
+
+#Step function for temperature dependent parameters
+# Ensure your data is sorted by date/time_idx
+sudan_TSI <- sudan_TSI[order(sudan_TSI$time_idx), ]
+
+# Create the step functions
+# f = 0 means: "For any time t between 0 and 31, use the value at 0."
+# rule = 2 means: "If t goes past the last date, just keep using the last value."
+
+mu_step_fun <- approxfun(x = sudan_TSI$time_idx, 
+                         y = sudan_TSI$mu, 
+                         method = "constant", 
+                         f = 0, 
+                         rule = 2)
+
+a_step_fun <- approxfun(x = sudan_TSI$time_idx, 
+                        y = sudan_TSI$a, 
+                        method = "constant", 
+                        f = 0, 
+                        rule = 2)
+
+sigma_step_fun <- approxfun(x = sudan_TSI$time_idx, 
+                            y = sudan_TSI$sigma_v,
+                            method = "constant", 
+                            f = 0, 
+                            rule = 2)
+```
+## State definition
+
+The skeleton model states.  We now add in an accumulator for new toxic cases
+between observations
+
+```{r state-definition}
+## State names (match your model)
+state_names <- c(
+  "Sh","Eh","Ih","Ah","Th","Rh",
+  "TotInf","TotDeath",
+  "Sv","Ev","Iv",
+  "Hsymp"
+)
+```
+
+## Model Parameters
+
+These are the pomp model parameters from Seth's SEIR model
+
+```{r pomp-params}
+
+model_pars <- list(
+  Nh = region.pop, 
+  
+  # LHS PARAMETERS; not used in the parameters directly
+  v_mult = 2, # Multiplied by the human population to get the vector population 
+  Iv0 = 100, # Initial number of infected mosquitoes
+  rho = 0.5,   # Case reporting probability
+  # Varying as the grid before the LHS
+  vacc_coverage = 0.6, # What percentage of the population is previously covered
+                       # by the vaccine.  In the SEIR: c(0.5, 0.6, 0.8)
+  vacc_start_day = 20,  # The day at which the vaccination campaign starts
+                        # In the SEIR model, this varies: c(20, 60, 120)
+  # Can we reduce the number of vectors needed to generate an epidemic by
+  # varying Ih0?
+  Ih0 = 1, # Initial number of infected humans
+  
+  # Model Fixed Parameters
+  sigma_h=1/4,  # Human incubation rate (1/sigma_h = mean latent duration)
+  gamma_h=1/4,  # Recovery rate from I and A
+  eta=1/2,      # Progression rate from I -> T (Toxic)
+  k=1/8,        # Toxic exit rate; how long do patients stay toxic? 1/8 =
+                # mean toxic duration
+  delta=0.12, #Ratio of symptomatic to asymptomatic individuals
+  
+  ########### THETA (Case fatality rate) ##############
+  # General
+  # theta=0.08,  # Case fatality rate of those leaving T
+  theta=0.095,  # Case fatality rate of those leaving T (Carlos)
+  # theta = 0.18,
+  ##################### THETA #########################
+  
+  b=0.4,       # Probability that a bite from an infected mosquito infects
+               # a human
+  c=0.5,       # Probability that biting an infected human infects the mosquito
+  xi=0.5,   # Relative infectiousness of asymptomatic vs symptomatic
+  
+  vacc_rate_per_person = 0.079 # Daily vaccination rate per person (Carlos)
+)
+
+# vacc_delay_scenarios <- c(20, 60, 120) # Days until vaccination starts
+# vacc_coverage_scenarios <- c(0.5, 0.6, 0.8)
+# Create a grid of all combinations
+# scenario_grid <- expand.grid(delay = vacc_delay_scenarios, 
+#                              coverage = vacc_coverage_scenarios)
+```
+## The deterministic skeleton
+
+```{r skeleton-day-step}
+yf_skeleton_C <- vectorfield(
+  Csnippet("
+    double Nh_current;
+    double Nv_current;
+    double lambda_h;
+    double lambda_v;
+    double current_vacc_flow;
+    double new_infections;
+    double new_deaths;
+    double new_sympto;
+
+    /* Current population totals */
+    Nh_current = Sh + Eh + Ih + Ah + Th + Rh;
+    Nv_current = Sv + Ev + Iv;
+
+    /* Forces of infection */
+    lambda_h = (a_t * b * Iv) / Nh_current;
+    lambda_v = (a_t * c * (Ih + xi * Ah)) / Nh_current;
+
+    /* Vaccination flow */
+    if (t >= vacc_start_day + 10) {
+      current_vacc_flow = vacc_rate_per_person * Sh;
+    } else {
+      current_vacc_flow = 0.0;
+    }
+
+    /* Incidence and death flows */
+    new_infections = sigma_h * Eh;
+    new_deaths     = theta * k * Th;
+    new_sympto     = sigma_h * delta * Eh;
+
+    /* Human derivatives */
+    DSh = -lambda_h * Sh
+          - current_vacc_flow;
+
+    DEh = lambda_h * Sh
+          - sigma_h * Eh;
+
+    DIh = delta * sigma_h * Eh
+          - eta * Ih;
+
+    DAh = (1.0 - delta) * sigma_h * Eh
+          - gamma_h * Ah;
+
+    DTh = eta * Ih
+          - k * Th;
+
+    DRh = gamma_h * Ah
+          + (1.0 - theta) * k * Th
+          + current_vacc_flow;
+
+    /* Mosquito derivatives */
+    DSv = mu_v_t * Nv_current
+          - lambda_v * Sv
+          - mu_v_t * Sv;
+
+    DEv = lambda_v * Sv
+          - (sigma_v_t + mu_v_t) * Ev;
+
+    DIv = sigma_v_t * Ev
+          - mu_v_t * Iv;
+
+    /* Cumulative-counter derivatives */
+    DTotInf   = new_infections;
+    DTotDeath = new_deaths;
+    DHsymp    = new_sympto;
+  ")
+)
+
+yf_skeleton <- vectorfield(
+  function(t, Sh, Eh, Ih, Ah, Th, Rh, TotInf, TotDeath, Sv, Ev, Iv, Hsymp, ...) {
+
+    p <- list(...)  # this will contain your parameters (a, b, c, sigma_h, ...)
+
+    with(p, {
+      
+      Nh <- Sh + Eh + Ih + Ah + Th + Rh
+      Nv <- Sv + Ev + Iv
+
+      lambda_h <- (a_t * b * Iv) / Nh
+      lambda_v <- (a_t * c * (Ih + xi * Ah)) / Nh
+
+      current_vacc_flow <- if (t >= vacc_start_day) vacc_rate_per_person * Sh else 0
+
+      new_infections <- sigma_h * Eh
+      new_deaths     <- theta * k * Th
+      new_sympto     <- sigma_h * delta * Eh
+
+      dSh <- -lambda_h * Sh - current_vacc_flow
+      dEh <-  lambda_h * Sh - sigma_h * Eh
+      dIh <-  delta * sigma_h * Eh - (eta * Ih)
+      dAh <- (1 - delta) * sigma_h * Eh - gamma_h * Ah
+      dTh <-  eta * Ih - k * Th
+      dRh <-  (gamma_h * Ah) + (1 - theta) * k * Th + current_vacc_flow
+
+      dSv <- mu_v_t * Nv - lambda_v * Sv - mu_v_t * Sv
+      dEv <- lambda_v * Sv - (sigma_v_t + mu_v_t) * Ev
+      dIv <- sigma_v_t * Ev - mu_v_t * Iv
+      
+      dHsymp <- new_sympto
+
+      c(
+        Sh=dSh, Eh=dEh, Ih=dIh, Ah=dAh, Th=dTh, Rh=dRh,
+        TotInf=new_infections, TotDeath=new_deaths,
+        Sv=dSv, Ev=dEv, Iv=dIv, Hsymp=dHsymp
+      )
+    })
+  }
+)
+```
+
+## The initial state of the skeleton
+
+```{r pomp-init}
+
+yf_rinit <- function(t0, ...) {
+  p <- list(...)
+
+  with(p, {
+    Rh0 <- Nh * vacc_coverage
+    Sh0 <- Nh - Rh0 - Ih0
+
+    c(
+      Sh = Sh0, Eh = 0, Ih = Ih0, Ah = 0, Th = 0, Rh = Rh0,
+      TotInf = 0, TotDeath = 0,
+      Sv = Nh * v_mult - Iv0, Ev = 0, Iv = Iv0, Hsymp = 0
+    )
+  })
+}
+```
+
+## Pomp functions
+
+Pomp expects observation functions, even though this is just the deterministic
+skeleton.  Stub them out
+
+```{r pomp-stubs}
+
+# Important here; both the ghana and the sudan data have the same names
+# and the same format; make sure we've properly selected the correct Data above
+# before running
+
+times <- 1:365
+
+# Create the covariates
+model_t0 <- 0
+
+covariate_times <- seq(
+  from = model_t0,
+  to   = max(times) + 1,
+  by   = 1
+)
+
+yf_covariates <- data.frame(
+  time = covariate_times,
+
+  mu_v_t = vapply(
+    covariate_times,
+    mu_step_fun,
+    numeric(1)
+  ),
+
+  a_t = vapply(
+    covariate_times,
+    a_step_fun,
+    numeric(1)
+  ),
+
+  sigma_v_t = vapply(
+    covariate_times,
+    sigma_step_fun,
+    numeric(1)
+  )
+)
+
+yf_covar_table <- covariate_table(
+  yf_covariates,
+  times = "time",
+  order = "constant"
+)
+
+dat <- data.frame(time=times, onset=onset_data)
+```
+
+## Measurement Model
+
+Now that we are introducing the case data, we need a measurement model
+Previously I was clamping the value of mu, but this was causing nll problems
+further down the line.
+
+```{r measurement-model}
+dmeasure <- function(onset, Hsymp, rho, ..., log) {
+  if (is.na(onset)) return(if (log) 0 else 1)
+
+  mu <- rho * Hsymp
+
+  # exact handling when mu is 0 or negative (shouldn't be negative, but be safe)
+  if (mu <= 0) {
+    if (log) return(if (onset == 0) 0 else -Inf)
+    else     return(if (onset == 0) 1 else 0)
+  }
+
+  dpois(onset, lambda = mu, log = log)
+}
+
+rmeasure <- function(Hsymp, rho, ...) {
+  mu <- pmax(rho * Hsymp, 0)
+  c(onset = rpois(1, lambda = mu))
+}
+```
+
+## Define the pomp object
+
+```{r pomp-object}
+po <- pomp(
+  data = dat,
+  times = "time",
+  t0 = model_t0,
+  # rprocess = rprocess_stub,
+  skeleton = yf_skeleton_C,
+  rinit = yf_rinit,
+  rmeasure = rmeasure,
+  dmeasure = dmeasure,
+  covar = yf_covar_table,
+  statenames = state_names,
+  paramnames = names(unlist(model_pars)),
+  accumvars = "Hsymp",
+  compile = TRUE
+)
+```
+
+## LHS
+
+We are looking to find sets of parameters that create outbreaks of YF that match
+the epi curves of established outbreaks.  We will vary the parameters using
+a latin hypercube sampling method.  Those variables we are looking at are defined
+here
+
+```{r lhs-params}
+
+# lhs.run.count <- 25000
+lhs.run.count <- 10000
+# random.seed <- 6232912 #abstract 10k seed (Ghana 22d/70%, v_mult 1-8 SA)
+random.seed <- 6232932 #abstract 10k seed (Ghana 22d/70%)
+
+lhs.scenario.sample.count = 4400
+lhs.scenario.sample.count.heatmap = 4400 #250
+
+lhs.spec <- list(
+  rho     = list(type="unif", min=0.2,  max=1.0), #Reporting Rate
+  Iv0     = list(type="int",  min=20,   max=500), #Initial Infected Vectors
+  # Ih0     = list(type="int",  min=0,    max=5),    #Initial Infected Humans
+  v_mult  = list(type="unif",  min=1,    max=8)   # Initial size of the vector population (times Human Pop)
+)
+
+```
+
+## LHS Parameter generation
+
+Now that we have identified all the parameters we would like to modify using 
+the lhs, we have to create the new parameter sets
+
+```{r lhs-parameter-generation}
+lhs_sample <- function(n, spec, seed=1) {
+  set.seed(seed)
+  pnames <- names(spec)
+  U <- randomLHS(n, length(pnames))
+  colnames(U) <- pnames
+
+  out <- as.data.frame(U)
+  for (nm in pnames) {
+    s <- spec[[nm]]
+    u <- out[[nm]]
+    if (s$type == "unif") {
+      out[[nm]] <- s$min + u*(s$max - s$min)
+    } else if (s$type == "log") {
+      out[[nm]] <- exp(log(s$min) + u*(log(s$max) - log(s$min)))
+    } else if (s$type == "int") {
+      out[[nm]] <- as.integer(round(s$min + u*(s$max - s$min)))
+    } else {
+      stop("Unknown type: ", s$type)
+    }
+  }
+  out
+}
+
+```
+## This will run one instance of the skeleton
+
+```{r lhs-run-single}
+# Now we create a function that runs the model once:
+
+run.single <- function(base_params, varied_row) {
+  params <- base_params
+  params[names(varied_row)] <- as.list(varied_row)
+
+  tr <- trajectory(po, params=params, format="data.frame")
+
+  total <- sum(tr$Hsymp, na.rm=TRUE)
+  peak  <- max(tr$Hsymp, na.rm=TRUE)
+  tpeak <- tr$time[which.max(tr$Hsymp)]
+
+  c(total_Hsymp=total, peak_Hsymp=peak, t_peak=tpeak)
+}
+
+run.single.params <- function(base_params, varied_row) {
+  params <- base_params
+  params[names(varied_row)] <- as.list(varied_row)
+
+  tr <- trajectory(po, params=params, format="data.frame")
+
+  total <- sum(tr$Hsymp, na.rm=TRUE)
+  peak  <- max(tr$Hsymp, na.rm=TRUE)
+  tpeak <- tr$time[which.max(tr$Hsymp)]
+  total_death <- sum(tr$TotDeath, na.rm=TRUE)
+
+  list("results" = c(total_Hsymp=total, peak_Hsymp=peak, t_peak=tpeak, total_death=total_death, rho=params$rho), "tr"=tr)
+}
+
+```
+
+# Running the LHS model parameter exploration
+
+Using r parallel for parallelization
+
+```{r run-lhs}
+# Now, we have the ability to generate parameters and run one simulation, put
+# them together and run multiple simulations
+
+# how many cores do we went to use?
+ncores <- max(1L, parallel::detectCores() - 1L)
+
+run.parallel.params <- function(run_params, lhs_params, core.count) {
+  stopifnot(is.data.frame(lhs_params) || is.matrix(lhs_params))
+  idx <- seq_len(nrow(lhs_params))
+
+  res_list <- parallel::mclapply(
+    idx,
+    function(i) run.single.params(run_params, lhs_params[i, ]),
+    mc.cores = core.count
+  )
+
+  # Extract the per-run named vectors
+  results_mat <- do.call(rbind, lapply(res_list, `[[`, "results"))
+  res <- as.data.frame(results_mat, stringsAsFactors = FALSE)
+
+  # Keep LHS parameters alongside results (assumes lhs_params is data.frame-like)
+  # res <- cbind(res, as.data.frame(lhs_params, stringsAsFactors = FALSE))
+
+  # Extract trajectories (list of data.frames), preserving order
+  traj_list <- lapply(res_list, `[[`, "tr")
+
+  list(res = res, traj = traj_list)
+}
+
+
+run.lhs.parallel <- function(run_params, lhs_params, core.count) {
+
+  # create the sequential index for the loop
+  idx <- seq_len(nrow(lhs_params))
+  
+  res_list <- mclapply(
+    idx,
+    function(i) {
+      run.single(run_params, lhs_params[i, ])
+    },
+    mc.cores = core.count
+  )
+  
+  res <- as.data.frame(do.call(rbind, res_list))
+  res <- cbind(res, lhs_params)
+  
+  res
+}
+
+```
+# Similarity to baseline
+
+```{r likelihood}
+
+# Now, we are looking for results within a certain threshold. Use the NLL 
+# (negative log likelihood) function as a vehicle to rank the results
+
+calc.nll.parallel <- function(run_params, lhs_params, core.count) {
+  est <- colnames(lhs_params)
+  ofun <- traj_objfun(po, est=est, params=unlist(run_params))
+  
+  # create the sequential index for the loop
+  idx <- seq_len(nrow(lhs_params))
+  
+  nll <- unlist(mclapply(
+    idx,
+    function(i) {
+      par_i <- setNames(as.numeric(lhs_params[i, est]), est)
+      ofun(par = par_i)
+    },
+    mc.cores = core.count
+  ))
+  
+  nll
+}
+
+low.runs.parallel <- function(results, run_params, lhs_params, core.count, nll.prox = 10) {
+  est <- colnames(lhs_params)
+  # Keep those within nll.prox NLL units of best
+  keep <- results$nll <= (min(results$nll, na.rm=TRUE) + nll.prox)
+  res_kept <- results[keep, ]
+  table(keep)
+  
+  idx_kept <- which(keep)   # or keep, depending what you’re saving
+  
+  # Re-calculate the trajectory of the runs that were successful
+  traj_kept <- mclapply(
+    idx_kept,
+    function(i) {
+      params <- unlist(run_params)
+      params[est] <- as.numeric(lhs_params[i, est])
+  
+      tr <- trajectory(po, params = params, format = "data.frame")
+      tr$run_id <- i
+      tr$nll    <- results$nll[i]
+      tr
+    },
+    mc.cores = ncores
+  )
+  
+  list(idx_kept = idx_kept, traj_kept = traj_kept, res_kept = res_kept)
+}
+
+```
+
+# Posterior examiniation
+
+We look at res_kept for the best runs, and examine their parameter values
+to check whether we can narrow our hypercube parameter ranges
+
+```{r lhs-posteriors}
+
+# Calculate bins for each parameter
+bin_one_param <- function(df, bins) {
+  v <- df$value
+  v_max <- max(v)
+  v_min <- 0
+
+  brks <- seq(v_min, v_max, length.out = bins + 1)
+  if (v_max == 0) brks <- seq(0, 1, length.out = bins + 1)  # degenerate guard
+
+  b <- findInterval(v, brks, rightmost.closed = TRUE)
+  b <- pmin(pmax(b, 1), length(brks) - 1)
+
+  df %>%
+    mutate(bin = b) %>%
+    group_by(bin) %>%
+    summarise(
+      xmin = brks[first(bin)],
+      xmax = brks[first(bin) + 1],
+      count = n(),
+      nll_med = median(nll, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+plot.posteriors <- function(results, params, bin.count = 50, title.text) {
+
+  # Clean up and pivot the data
+  plot_df <- results %>%
+    select(any_of(c(params, "nll"))) %>%
+    pivot_longer(cols = any_of(params), names_to = "param", values_to = "value") %>%
+    filter(!is.na(value), !is.na(nll))
+  
+  # Apply the bin calculating function above to each parameter
+  binned <- plot_df %>%
+    group_by(param) %>%
+    group_modify(~ bin_one_param(.x, bins = bin.count)) %>%
+    ungroup()
+  
+  # Plot the histograms
+  plot <- ggplot(binned) +
+    geom_rect(aes(xmin = xmin, xmax = xmax, ymin = 0, ymax = count, fill = nll_med)) +
+    facet_wrap(~ param, scales = "free_x", ncol = 1) +
+    # Start at zero
+    scale_x_continuous(expand = c(0, 0), limits = c(0, NA)) +
+    # Legend
+    scale_fill_gradient(low = "grey10", high = "grey90", name = "median NLL") +
+    theme(plot.title = element_text(size = 10)) +
+    labs(x = NULL, y = "count", title = title.text)
+  # print(plot)
+  invisible(plot)
+}
+
+```
+
+# Baseline-LHS
+
+We now want to produce a single, large LHS for the scenario we are mapping
+
+```{r single-baseline-lhs}
+
+# Single version params
+vacc_delay_scenario <- vacc_delay
+vacc_coverage_scenario <- vacc_cov
+
+ #Create a grid of all combinations
+scenario_grid <- expand.grid(#rr = relative_infectivity,
+                             delay = vacc_delay_scenario,
+                             coverage = vacc_coverage_scenario)
+
+# scenario.count = nrow(scenario_grid)
+# LHS to examine during posterior analysis
+posterior.params <- c("rho", "Iv0", "v_mult")
+
+# For the cumulative plots, create a cumulative data set
+
+dat_cum <- dat %>%
+  arrange(time) %>%
+  mutate(Cobs = cumsum(onset)) 
+
+iter.str = sprintf("%s Baseline LHS, Size %g", tools::toTitleCase(country), lhs.run.count)
+ 
+cat(iter.str)
+  
+vals <- list(delay=vacc_delay_scenario, coverage=vacc_coverage_scenario)
+params_copy <- model_pars
+  
+# Grid params
+params_copy$vacc_start_day <- vals$delay
+params_copy$vacc_coverage <- vals$coverage
+  
+# Sample the LHS
+lhs_params <- lhs_sample(n=lhs.run.count, spec=lhs.spec, seed=random.seed)
+  
+# Scenario updated, run model:
+res <- run.lhs.parallel(params_copy, lhs_params, ncores)
+res$nll <- calc.nll.parallel(params_copy, lhs_params, ncores)
+  
+# Calculate within nll.prox points, and retrieve those trajectories
+traj_results = low.runs.parallel(res, params_copy, lhs_params, ncores, nll.prox = 10)
+
+traj_kept <- traj_results$traj_kept
+idx_kept <- traj_results$idx_kept
+res_kept <- traj_results$res_kept
+
+names(traj_kept) <- paste0("lhs_", idx_kept)
+
+title = sprintf("Delay %g, Coverage %.0f%%",
+                vacc_delay, vacc_cov * 100)
+  
+```
+```{r baseline-plots}
+
+## build a long data.frame of trajectories
+traj_df <- do.call(rbind, lapply(seq_along(traj_kept), function(i) {
+  tr <- traj_kept[[i]]
+  data.frame(
+    traj_id  = i,
+    time     = tr$time,
+    Hsymp    = tr$Hsymp,
+    obs_onset = tr$Hsymp * res_kept$rho[i],
+    TotDeath = tr$TotDeath,
+    nll      = tr$nll[1],   # assumes nll is per-trajectory
+    stringsAsFactors = FALSE
+  )
+}))
+
+band <- traj_df %>%
+  group_by(time) %>%
+  summarise(
+    mean = mean(obs_onset, na.rm = TRUE),
+    lo   = quantile(obs_onset, 0.025, na.rm = TRUE),
+    hi   = quantile(obs_onset, 0.975, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+display.prefix = if (country == "sudan") { "South " } else { "" }
+
+baseline.traj.plot <- ggplot() +
+  geom_point(data = dat, aes(x = time, y = onset), shape = 16) +
+  geom_ribbon(data = band, aes(x = time, ymin = lo, ymax = hi), alpha = 0.25) +
+  geom_line(data = band, aes(x = time, y = mean), linewidth = 0.8) +
+  coord_cartesian(ylim = c(0, 8)) +
+  theme(plot.title = element_text(size = 10)) +
+  labs(x = "day", y = "cases", title = paste0(display.prefix,tools::toTitleCase(country),": ",title)) +
+  theme_minimal()
+
+
+# Cumulative plot data
+traj_cum <- traj_df %>%
+  arrange(traj_id, time) %>%
+  group_by(traj_id) %>%
+  mutate(
+    Csymp = cumsum(Hsymp),
+    Cobs_onset = cumsum(obs_onset)
+  ) %>%
+  ungroup()
+
+band_cum <- traj_cum %>%
+  group_by(time) %>%
+  summarise(
+    mean = mean(Cobs_onset, na.rm = TRUE),
+    lo   = quantile(Cobs_onset, 0.025, na.rm = TRUE),
+    hi   = quantile(Cobs_onset, 0.975, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+baseline.cum.plot <- ggplot() +
+  geom_ribbon(
+    data = band_cum,
+    aes(x = time, ymin = lo, ymax = hi, fill = "95% interval"),
+    alpha = 0.25
+  ) +
+  geom_line(
+    data = band_cum,
+    aes(x = time, y = mean, colour = "Model mean"),
+    linewidth = 0.8
+  ) +
+  geom_step(
+    data = dat_cum,
+    aes(x = time, y = Cobs, colour = "Observed cumulative"),
+    linewidth = 0.8 
+  ) +
+  scale_colour_manual(
+    name = NULL,
+    values = c("Observed cumulative" = "black",
+               "Model mean" = "blue")
+  ) +
+  scale_fill_manual(
+    name = NULL,
+    values = c("95% interval" = "grey60")
+  ) +
+  labs(x = "day", y = "cumulative cases", title = paste0(display.prefix,tools::toTitleCase(country),": ", title)) +
+  theme_minimal() + 
+  theme(
+    legend.position = if (country == "ghana") { "inside" } else { "none" },
+    legend.position.inside = c(0.98, 0.02),      # bottom-right
+    legend.justification.inside = c(1, 0),       # anchor legend's bottom-right corner
+    legend.background = element_rect(fill = "white", colour = NA),
+    legend.key.size = grid::unit(0.4, "lines"),
+    legend.text = element_text(size = 11),
+    legend.spacing.y = grid::unit(0.1, "lines"),
+    legend.margin = margin(2, 2, 2, 2)
+  )
+
+# Total Deaths
+death_totals <- traj_df %>%
+  group_by(traj_id) %>%
+  summarise(total_deaths = max(TotDeath, na.rm = TRUE), .groups = "drop")
+
+baseline.death.plots <- ggplot(death_totals, aes(x = total_deaths)) +
+  geom_histogram(bins = 30) +
+  labs(x = "total deaths (end of simulation)", y = "count", title = paste0(tools::toTitleCase(country),": ",title)) +
+  theme_minimal()
+
+baseline.plot <- plot.posteriors(res_kept, posterior.params, bin.count = 50, paste0(tools::toTitleCase(country),": ", title))
+  
+baseline.out <- traj_results
+```
+# output plots
+```{r baseline-plots}
+ggsave(filename=sprintf("Plots/%s_baseline_posteriors.png", country), 
+       plot=baseline.plot, width=4,height=4,dpi=300, bg="white")
+ggsave(filename=sprintf("Plots/%s_baseline_trajectories.png", country),
+       plot=baseline.traj.plot, width=4,height=4,dpi=300, bg="white")
+ggsave(filename=sprintf("Plots/%s_baseline_cumulative_trajectories.png", country),
+       plot=baseline.cum.plot, width=4,height=4,dpi=300, bg="white")
+ggsave(filename=sprintf("Plots/%s_baseline_deaths.png", country), 
+       plot=baseline.death.plots, width=4,height=4,dpi=300, bg="white")
+```
+
+# Weighted Resample
+After the baseline run, we want to do a weighted resample, so do that here
+```{r weighted-resample}
+df_kept <- as.data.frame(res_kept, stringsAsFactors = FALSE)
+
+# How many results to keep?
+# n <- lhs.scenario.sample.count
+n <- lhs.scenario.sample.count.heatmap
+
+# Distribute the weights
+w <- 1 / exp(df_kept$nll)
+w <- w / sum(w)
+
+# Do the sampling
+sampled_idx <- sample.int(nrow(df_kept), size = n, replace = TRUE, prob = w)
+
+# Parse out the results
+sampled_kept <- df_kept[sampled_idx,]
+params_10k <- sampled_kept[, c("rho", "Iv0", "v_mult")]
+```
+
+#Viable Runs
+
+Run viable runs from the baseline scenario for other scenarios
+
+```{r scenario-runs}
+
+# Now we have the N viable runs from the lhs of 10,000.  Run each set of viable
+# params through the different scenarios.
+
+# Abstract scenarios
+# vacc_delay_scenarios <- c(60, 120) # Days until vaccination starts
+# vacc_coverage_scenarios <- c(0.7, 0.8)
+
+# Non-heatmap version scenarios
+# vacc_delay_scenarios <- c(20, 60, 120) # Days until vaccination starts
+# vacc_coverage_scenarios <- c(0.5, 0.6, 0.8)
+
+# Options needed to run baseline scenarios
+vacc_delay_scenarios <- c(22)
+# vacc_delay_scenarios <- c(61)
+vacc_coverage_scenarios <- c(0.7)
+# vacc_coverage_scenarios <- c(0.5)
+
+ #Create a grid of all combinations
+scenario_grid <- expand.grid(delay = vacc_delay_scenarios, 
+                             coverage = vacc_coverage_scenarios)
+
+scenario.count = nrow(scenario_grid)
+# LHS to examine during posterior analysis
+posterior.params <- c("rho", "Iv0", "v_mult")
+
+
+# We want to pull from the sampled weights, rather than all the returned values.
+param.values <- params_10k
+# param.values <- baseline.out$res_kept[,c("rho","Iv0","v_mult")]
+
+good.param.count <- nrow(param.values)
+
+# For the cumulative plots, create a cumulative data set
+
+dat_cum <- dat %>%
+  arrange(time) %>%
+  mutate(Cobs = cumsum(onset)) 
+
+# We store the trajectory/nll information in `out`
+run.results = list()
+
+for (idx in 1:scenario.count) {
+  
+  # For each scenario, I have to run the set of viable parameters (param.values)
+  
+  iter.str = sprintf("Running scenario %g/%g (%g runs)\n", idx, scenario.count, good.param.count)
+  
+  cat(iter.str)
+  
+  vals <- scenario_grid[idx,]
+  params_copy <- model_pars
+  
+  # Grid params
+  params_copy$vacc_start_day <- vals$delay
+  params_copy$vacc_coverage <- vals$coverage
+  # params_copy$xi <- vals$rr
+  
+  # Sample the LHS
+  # lhs_params <- lhs_sample(n=lhs.run.count, spec=lhs.spec, seed=random.seed)
+  
+  # param.values can replace lhs_params directly
+  
+  # Scenario updated, run model:
+  res_list <- run.parallel.params(params_copy, param.values, ncores)
+  
+  names(res_list$traj) <- paste0("params_", seq_along(res_list$res))
+  
+  run.results[[idx]] <- res_list
+}
+
+```
+# Heatmap Only
+
+  We want the heatmaps to have the same results as the data tables, but that will
+  only happen if we have the same number of iterations; making the heatmap with all
+  the extraneous data is taxing for RAM, write a secondary scenario executor that
+  runs the heatmap code.  Bypasses 'run_results' and goes right to 'out'
+  
+```{r run-heatmap-scenarios, eval=FALSE}
+
+vacc_delay_scenarios <- c(20, 40, 60, 80, 100, 120)
+vacc_coverage_scenarios <- c(0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+
+ #Create a grid of all combinations
+scenario_grid <- expand.grid(delay = vacc_delay_scenarios, 
+                             coverage = vacc_coverage_scenarios)
+
+scenario.count = nrow(scenario_grid)
+# LHS to examine during posterior analysis
+posterior.params <- c("rho", "Iv0", "v_mult")
+
+
+# We want to pull from the sampled weights, rather than all the returned values.
+param.values <- params_10k
+# param.values <- baseline.out$res_kept[,c("rho","Iv0","v_mult")]
+
+good.param.count <- nrow(param.values)
+
+# For the cumulative plots, create a cumulative data set
+
+dat_cum <- dat %>%
+  arrange(time) %>%
+  mutate(Cobs = cumsum(onset)) 
+
+
+out <- vector("list", scenario.count)
+
+for (idx in seq_len(scenario.count)) {
+
+  cat(sprintf(
+    "Running scenario %g/%g (%g runs)\n",
+    idx,
+    scenario.count,
+    good.param.count
+  ))
+
+  vals <- scenario_grid[idx, ]
+  params_copy <- model_pars
+
+  params_copy$vacc_start_day <- vals$delay
+  params_copy$vacc_coverage  <- vals$coverage
+
+  res_list <- run.parallel.params(
+    params_copy,
+    param.values,
+    ncores
+  )
+
+  out[[idx]] <- list(
+    res_kept = res_list$res[, c(
+      "rho",
+      "total_Hsymp"
+    ), drop = FALSE]
+  )
+
+  rm(res_list)
+  gc(FALSE)
+}
+```
+
+# Appendix Tables
+
+```{r appendix-tables, eval=FALSE}
+
+# Get the additional number of cases/deaths for the table
+
+death_1 = unname(sapply( run.results[[1]]$traj, function(t) { max(t$TotDeath) } ))
+# death_2 = unname(sapply( run.results[[2]]$traj, function(t) { max(t$TotDeath) } ))
+# death_3 = unname(sapply( run.results[[3]]$traj, function(t) { max(t$TotDeath) } ))
+# death_4 = unname(sapply( run.results[[4]]$traj, function(t) { max(t$TotDeath) } ))
+# death_5 = unname(sapply( run.results[[5]]$traj, function(t) { max(t$TotDeath) } ))
+# death_6 = unname(sapply( run.results[[6]]$traj, function(t) { max(t$TotDeath) } ))
+# death_7 = unname(sapply( run.results[[7]]$traj, function(t) { max(t$TotDeath) } ))
+# death_8 = unname(sapply( run.results[[8]]$traj, function(t) { max(t$TotDeath) } ))
+# death_9 = unname(sapply( run.results[[9]]$traj, function(t) { max(t$TotDeath) } ))
+
+symp_1 = unname(sapply( seq_along(run.results[[1]]$traj), function(run_idx) { (sum(run.results[[1]]$traj[[run_idx]]$Hsymp) * run.results[[1]]$res$rho[[run_idx]]) } ))
+# symp_2 = unname(sapply( seq_along(run.results[[2]]$traj), function(run_idx) { (sum(run.results[[2]]$traj[[run_idx]]$Hsymp) * run.results[[2]]$res$rho[[run_idx]]) } ))
+# symp_3 = unname(sapply( seq_along(run.results[[3]]$traj), function(run_idx) { (sum(run.results[[3]]$traj[[run_idx]]$Hsymp) * run.results[[3]]$res$rho[[run_idx]]) } ))
+# symp_4 = unname(sapply( seq_along(run.results[[4]]$traj), function(run_idx) { (sum(run.results[[4]]$traj[[run_idx]]$Hsymp) * run.results[[4]]$res$rho[[run_idx]]) } ))
+# symp_5 = unname(sapply( seq_along(run.results[[5]]$traj), function(run_idx) { (sum(run.results[[5]]$traj[[run_idx]]$Hsymp) * run.results[[5]]$res$rho[[run_idx]]) } ))
+# symp_6 = unname(sapply( seq_along(run.results[[6]]$traj), function(run_idx) { (sum(run.results[[6]]$traj[[run_idx]]$Hsymp) * run.results[[6]]$res$rho[[run_idx]]) } ))
+# symp_7 = unname(sapply( seq_along(run.results[[7]]$traj), function(run_idx) { (sum(run.results[[7]]$traj[[run_idx]]$Hsymp) * run.results[[7]]$res$rho[[run_idx]]) } ))
+# symp_8 = unname(sapply( seq_along(run.results[[8]]$traj), function(run_idx) { (sum(run.results[[8]]$traj[[run_idx]]$Hsymp) * run.results[[8]]$res$rho[[run_idx]]) } ))
+# symp_9 = unname(sapply( seq_along(run.results[[9]]$traj), function(run_idx) { (sum(run.results[[9]]$traj[[run_idx]]$Hsymp) * run.results[[9]]$res$rho[[run_idx]]) } ))
+
+mean(death_1)
+quantile(death_1, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_2)
+# quantile(death_2, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_3)
+# quantile(death_3, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_4)
+# quantile(death_4, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_5)
+# quantile(death_5, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_6)
+# quantile(death_6, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_7)
+# quantile(death_7, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_8)
+# quantile(death_8, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(death_9)
+# quantile(death_9, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+
+mean(symp_1)
+quantile(symp_1, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_2)
+# quantile(symp_2, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_3)
+# quantile(symp_3, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_4)
+# quantile(symp_4, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_5)
+# quantile(symp_5, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_6)
+# quantile(symp_6, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_7)
+# quantile(symp_7, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_8)
+# quantile(symp_8, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+# mean(symp_9)
+# quantile(symp_9, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+
+
+```
+
+# Plots
+
+```{r plot-from-results}
+
+out = list()
+traj.plots = list()
+cum.plots = list()
+death.plots = list()
+traj.bands = list()
+
+coverage.cols = c(rep("blue",3),rep("green",3),rep("orange",3))
+
+for (idx in 1:scenario.count) {
+  
+  traj <- run.results[[idx]]$traj
+  res <- run.results[[idx]]$res
+  
+  # names(traj) <- paste0("params_", seq_along(res))
+  
+  title = sprintf("Delay %g, Coverage %.0f%%", 
+                  scenario_grid[idx,]$delay, scenario_grid[idx,]$coverage * 100)
+  
+  ## build a long data.frame of trajectories
+  traj_df <- do.call(rbind, lapply(seq_along(traj), function(i) {
+    tr <- traj[[i]]
+    data.frame(
+      traj_id  = i,
+      time     = tr$time,
+      Hsymp    = tr$Hsymp,
+      obs_onset = tr$Hsymp * res$rho[[i]],
+      TotDeath = tr$TotDeath,
+      stringsAsFactors = FALSE
+    )
+  }))
+  
+  band <- traj_df %>%
+    group_by(time) %>%
+    summarise(
+      mean = mean(obs_onset, na.rm = TRUE),
+      lo   = quantile(obs_onset, 0.025, na.rm = TRUE),
+      hi   = quantile(obs_onset, 0.975, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Independant axes
+  ymax <- max(band$hi)
+  if (ymax < 8) {
+    ymax <- 6 
+  }
+  # Same axes
+  # ymax <- 45.7
+  
+  cat(paste0("Ymax for this iteration: ", ymax, "\n"))
+  # Cumulative plot data
+    # Rework the traj.plots
+  traj.x.label <- ""
+  traj.y.label <- ""
+  if (idx == 4) {
+    traj.y.label = "daily cases"
+  }
+  if (idx == 8) {
+    traj.x.label = "day"
+  }
+  delay_labels    <- c(" 20d", " 60d", "120d")
+  coverage_labels <- c("50%", "60%", "80%") 
+  
+  row <- (idx - 1) %/% 3 + 1
+  col <- (idx - 1) %% 3 + 1
+  
+  traj.bands[[idx]] <- band %>%
+    mutate(
+      delay = factor(delay_labels[col], levels = delay_labels),
+      coverage = factor(coverage_labels[row], levels = coverage_labels)
+    )
+  
+  traj_cum <- traj_df %>%
+    arrange(traj_id, time) %>%
+    group_by(traj_id) %>%
+    mutate(Cobs_onset = cumsum(obs_onset)) %>%
+    ungroup()
+  
+  band_cum <- traj_cum %>%
+    group_by(time) %>%
+    summarise(
+      mean = mean(Cobs_onset, na.rm = TRUE),
+      lo   = quantile(Cobs_onset, 0.025, na.rm = TRUE),
+      hi   = quantile(Cobs_onset, 0.975, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  cum.plots[[idx]] <- ggplot() +
+    geom_ribbon(data = band_cum, aes(x = time, ymin = lo, ymax = hi), fill = coverage.cols[idx], alpha = 0.25) +
+    geom_line(data = band_cum, aes(x = time, y = mean), color = coverage.cols[idx], linewidth = 0.8) +
+    labs(x = "day", y = "cumulative cases", title = title) +
+    theme_minimal()
+  
+  # Total Deaths
+  death_totals <- traj_df %>%
+    group_by(traj_id) %>%
+    summarise(total_deaths = max(TotDeath, na.rm = TRUE), .groups = "drop")
+
+  death.plots[[idx]] <- ggplot(death_totals, aes(x = total_deaths)) +
+    geom_histogram(bins = 30) +
+    labs(x = "total deaths (end of simulation)", y = "count", title = title) +
+    theme_minimal()
+
+  out[[idx]] <- list(traj_kept=traj, res_kept=res)
+}
+
+# Create the trajectories plot; just the data right now, combine to make the stacked 3 plot
+# It needs data from all scenarios,, so must be created afterwards
+traj_data_frame <- bind_rows(traj.bands) %>%
+  filter(time <= 200)
+
+row_plots <- lapply(levels(traj_data_frame$coverage), function(cov_lab) {
+
+  df_cov <- filter(traj_data_frame, coverage == cov_lab)
+
+  ymax_row <- max(df_cov$hi, na.rm = TRUE)
+
+  ggplot(df_cov, aes(x = time, y = mean, color = delay)) +
+
+    ## CI ribbon only for 120-day delay
+    geom_ribbon(
+      data = filter(df_cov, delay == "120d"),
+      aes(x = time, ymin = lo, ymax = hi, fill = "ci120", group = 1),
+      inherit.aes = FALSE,
+      # fill = "grey70",
+      alpha = 0.30,
+      color = NA
+    ) +
+    
+    scale_fill_manual(
+      values = c("ci120" = "grey70"),
+      breaks = "ci120",
+      labels = "120-day 95% Interval",
+      name = NULL
+    ) +
+
+    # geom_line(linewidth = 0.9) +
+    geom_line(linewidth = 1.6) +
+
+    coord_cartesian(
+      xlim = c(0, 200),
+      ylim = c(0, ymax_row + 2)
+    ) +
+
+    labs(
+      title = paste("Vaccination coverage:", cov_lab),
+      x = NULL,
+      y = "daily cases",
+      color = "Vaccination delay"
+    ) +
+
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      axis.title = element_text(size = 14),
+      axis.text = element_text(size = 12),
+      legend.position = "right"
+    )
+})
+
+row_plots[[3]] <- row_plots[[3]] + labs(x = "day")
+
+## Extract the legend from the first plot
+legend_grob <- cowplot::get_legend(
+  row_plots[[1]] +
+    theme(legend.position = "right")
+)
+
+## Remove the embedded legends from all three plots
+row_plots_no_legend <- lapply(
+  row_plots,
+  function(p) p + theme(legend.position = "none")
+)
+
+```
+
+
+```{r graph-output}
+# plot.row.count = floor(sqrt(scenario.count))
+# plot.col.count = ceiling(scenario.count / plot.row.count)
+# plot.col.count = 3 # Constant column width
+plot.col.count = 3 # Constant column width (11x11 HEATMAP)
+plot.row.count = ceiling(scenario.count / plot.col.count)
+
+
+# Arrange the plots into one image
+## Arrange plots in the first column and reserve a legend column
+updated.trajectories <- grid.arrange(
+  grobs = list(
+    row_plots_no_legend[[1]], legend_grob,
+    row_plots_no_legend[[2]], nullGrob(),
+    row_plots_no_legend[[3]], nullGrob()
+  ),
+  layout_matrix = matrix(
+    1:6,
+    nrow = 3,
+    byrow = TRUE
+  ),
+  widths = c(1, 0.22),
+  heights = c(1, 1, 1)
+)
+
+all.cumulative.plots <- grid.arrange(grobs = cum.plots, ncol = plot.col.count, nrow=plot.row.count)
+all.death.plots <- grid.arrange(grobs = death.plots, ncol = plot.col.count, nrow=plot.row.count)
+
+ggsave(filename=sprintf("Plots/%s_trajectories.png", country),
+       plot = updated.trajectories,
+       width=plot.col.count * 4,
+       height=plot.row.count * 4,
+       dpi=300)
+
+ggsave(filename=sprintf("Plots/%s_cumulative_trajectories.png", country),
+       plot = all.cumulative.plots,
+       width=plot.col.count * 4,
+       height=plot.row.count * 4,
+       dpi=300)
+
+ggsave(filename=sprintf("Plots/%s_deaths.png", country),
+       plot = all.death.plots,
+       width=plot.col.count * 4,
+       height=plot.row.count * 4,
+       dpi=300)
+
+```
+#Heatmap
+
+We want to produce a single figure that can represent multiple data points across the simulations.
+
+```{r heatmap}
+
+scenario_grid$cluster_id <- seq_len(nrow(scenario_grid))
+
+# How do we interpret the values from the runs? Accept the values, the nll values
+# and the method: 
+#    'mean' - mean of all the values
+reduce_vals <- function(vals) {
+  # Match.arg will return the user specified value or the first value in the method vector above
+  # This would be the "best" value, ie the one with the lowest nll
+  mean(vals)
+}
+
+
+# Extract a numeric vector from res_kept column (one value per accepted run)
+extract_from_rescol <- function(res_col) {
+  force(res_col)
+
+  function(cluster) {
+    rk <- cluster$res_kept
+
+    list(
+      vals = as.numeric(rk[[res_col]] * rk$rho)
+    )
+  }
+}
+
+# Extract a numeric vector from each trajectory (one value per accepted run)
+extract_from_traj <- function(traj_fun) {
+  # traj_fun is a function that operates over the entire column, reducing it to one value.
+  # So "sum", "max", "min", etc.
+  force(traj_fun)
+  function(cluster) {
+    rk <- cluster$res_kept
+    tk <- cluster$traj_kept
+    
+    vals <- vapply(tk, function(tr) as.numeric(traj_fun(tr)), numeric(1))
+    list(vals = vals)
+  }
+}
+
+make_heatmap <- function(out,
+                         # value.clamp = 1300,
+                         extractor,
+                         delays = vacc_delay_scenarios,
+                         coverages = vacc_coverage_scenarios,
+                         fill_label = "value",
+                         title = NULL,
+                         subtitle = NULL,
+                         na_fill = "grey90") {
+
+  grid <- scenario_grid
+
+  # Use the extractor and the reducer to compute one scalar per cluster
+  grid$value <- vapply(out, function(cluster) {
+    ex <- extractor(cluster)         
+    reduce_vals(ex$vals)
+    # min (reduce_vals(ex$vals), value.clamp)
+  }, numeric(1))
+  
+  # grid$text_col <- ifelse(
+  #   scales::rescale(log10(grid$value)) < 0.55,
+  #   "#F2F2F2",
+  #   "#111111",
+  # )
+    ok <- is.finite(grid$value) & grid$value > 0
+    
+    grid$text_col <- "#111111"
+    
+    scaled_value <- rep(NA_real_, nrow(grid))
+    
+    scaled_value[ok] <- scales::rescale(
+      log10(grid$value[ok]),
+      to = c(0, 1)
+    )
+
+    grid$text_col[ok & scaled_value < 0.55] <- "#F2F2F2"
+    # We also want to display the actual value in the cell, not the clamped value
+  grid$orig <- vapply(out, function(cluster) {
+    ex <- extractor(cluster)
+    floor(reduce_vals(ex$vals))
+  }, numeric(1))
+  
+  tile_width  <- min(diff(sort(unique(grid$delay))))
+  tile_height <- min(diff(sort(unique(grid$coverage))))
+  
+  highlight_cell <- grid %>%
+    dplyr::filter(
+      delay == if (country == "ghana") { 20 } else { 60 },
+      coverage == if (country == "ghana") { 0.70 } else { 0.50 }
+    )
+  
+  p <- ggplot(grid, aes(x = delay, y = coverage, fill = value)) +
+    geom_tile(color = NA) +
+    
+    geom_tile(
+      data = highlight_cell,
+      aes(x = delay, y = coverage),
+      width = tile_width,
+      height = tile_height,
+      fill = NA,
+      color = "#E6E6E6",
+      linewidth = 0.8,
+      inherit.aes = FALSE
+    ) +
+    
+    geom_text(
+      aes(label = round(orig, 1), color=text_col),
+      # color = "black",
+      # color = text_col,
+      fontface = "bold",
+      size = 2
+    ) + scale_color_identity() +
+    viridis::scale_fill_viridis(
+      option = "C",
+      na.value = na_fill,
+      trans="log10",
+      labels = function(x) format(x, scientific = FALSE, trim = TRUE)
+    ) +
+    scale_x_continuous(breaks = delays) +
+    scale_y_reverse(breaks = coverages) + 
+    # scale_y_continuous(breaks = coverages) +
+    labs(x = "Vaccination start delay (days)",
+         y = "Vaccination coverage",
+         fill = fill_label,
+         title = title,
+         subtitle = subtitle) +
+    theme_minimal()
+
+  list(grid = grid, plot = p)
+}
+```
+
+```{r heatmap-runs}
+
+# We're scaling all returned values (in this case total_Hsymp) by rho
+hsymp_m <- make_heatmap(
+  out,
+  extractor = extract_from_rescol("total_Hsymp"),
+  fill_label = "Cumulative Cases",
+)
+
+ggsave(filename=sprintf("Plots/%s_heatmap.png", country),
+       plot = hsymp_m$plot,
+       width=4,
+       height=4,
+       dpi=300,
+       bg='white')
+```
+# Paper figures
+
+```{r figures}
+# Weighted Mean of rho values from the kept list from
+# the initial LHS
+
+weighted_quantile <- function(x, w, probs = c(0.025, 0.975)) {
+  ok <- is.finite(x) & is.finite(w) & w >= 0
+  x <- x[ok]
+  w <- w[ok]
+
+  ord <- order(x)
+  x <- x[ord]
+  w <- w[ord]
+
+  w <- w / sum(w)
+  cw <- cumsum(w)
+
+  sapply(probs, function(p) {
+    x[which(cw >= p)[1]]
+  })
+}
+
+posterior_summary <- function(x, w) {
+  qs <- weighted_quantile(x, w)
+
+  c(
+    mean = weighted.mean(x, w, na.rm = TRUE),
+    lo95 = qs[1],
+    hi95 = qs[2]
+  )
+}
+
+nll <- res_kept$nll
+
+w <- exp(-(nll - min(nll, na.rm = TRUE)))
+
+rho_summary <- posterior_summary(res_kept$rho, w)
+v_mult_summary <- posterior_summary(res_kept$v_mult, w)
+Iv0_summary <- posterior_summary(res_kept$Iv0, w)
+
+rho_summary
+v_mult_summary
+Iv0_summary
+
+```
+# Case Count numbers for table
+
+```{r case-count-table}
+
+# Helper function to summarize the statistical data from a data vector
+summ_vec <- function(x) {
+  c(
+    n    = length(x),
+    mean = mean(x),
+    lo95 = unname(quantile(x, 0.025)),
+    hi95 = unname(quantile(x, 0.975))
+  )
+}
+
+# Collect the statistics from total_Hsymp * rho
+cases_summary <- do.call(rbind, lapply(seq_along(out), function(i) {
+  rk <- out[[i]]$res_kept
+  hsymp_stats <- summ_vec(rk$total_Hsymp * rk$rho)
+  cbind(scenario_grid[i, ], t(hsymp_stats))
+}))
+
+comment(cases_summary) <- sprintf("%s case summary", tools::toTitleCase(country))
+print(cases_summary)
+
+```
