@@ -941,10 +941,6 @@ Run viable runs from the baseline scenario for other scenarios
 # Now we have the N viable runs from the lhs of 10,000.  Run each set of viable
 # params through the different scenarios.
 
-# Abstract scenarios
-# vacc_delay_scenarios <- c(60, 120) # Days until vaccination starts
-# vacc_coverage_scenarios <- c(0.7, 0.8)
-
 # Non-heatmap version scenarios
 vacc_delay_scenarios <- c(20, 60, 120) # Days until vaccination starts
 vacc_coverage_scenarios <- c(0.5, 0.6, 0.8)
@@ -966,7 +962,6 @@ posterior.params <- c("rho", "Iv0", "v_mult")
 
 # We want to pull from the sampled weights, rather than all the returned values.
 param.values <- params_10k
-# param.values <- baseline.out$res_kept[,c("rho","Iv0","v_mult")]
 
 good.param.count <- nrow(param.values)
 
@@ -993,10 +988,6 @@ for (idx in 1:scenario.count) {
   # Grid params
   params_copy$vacc_start_day <- vals$delay
   params_copy$vacc_coverage <- vals$coverage
-  # params_copy$xi <- vals$rr
-  
-  # Sample the LHS
-  # lhs_params <- lhs_sample(n=lhs.run.count, spec=lhs.spec, seed=random.seed)
   
   # param.values can replace lhs_params directly
   
@@ -1032,7 +1023,6 @@ posterior.params <- c("rho", "Iv0", "v_mult")
 
 # We want to pull from the sampled weights, rather than all the returned values.
 param.values <- params_10k
-# param.values <- baseline.out$res_kept[,c("rho","Iv0","v_mult")]
 
 good.param.count <- nrow(param.values)
 
@@ -1094,8 +1084,6 @@ for (idx in 1:scenario.count) {
   
   traj <- run.results[[idx]]$traj
   res <- run.results[[idx]]$res
-  
-  # names(traj) <- paste0("params_", seq_along(res))
   
   title = sprintf("Delay %g, Coverage %.0f%%", 
                   scenario_grid[idx,]$delay, scenario_grid[idx,]$coverage * 100)
