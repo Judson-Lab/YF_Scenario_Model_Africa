@@ -236,9 +236,9 @@ model_pars <- list(
   rho = NA_real_,   # Case reporting probability
   
   # Varying as the grid before the LHS
-  vacc_coverage = 0.6,#NA_real_, # What percentage of the population is previously covered
+  vacc_coverage = NA_real_, # What percentage of the population is previously covered
                        # by the vaccine.  In the SEIR: c(0.5, 0.6, 0.8)
-  vacc_start_day = 22,#NA_real_,  # The day at which the vaccination campaign starts
+  vacc_start_day = NA_real_,  # The day at which the vaccination campaign starts
                         # In the SEIR model, this varies: c(20, 60, 120)
   Ih0 = 1, # Initial number of infected humans
   
@@ -607,22 +607,40 @@ run.lhs.parallel <- function(run_params, lhs_params, core.count) {
 # (negative log likelihood) function as a vehicle to rank the results
 
 calc.nll.parallel <- function(run_params, lhs_params, core.count) {
+
   est <- colnames(lhs_params)
-  ofun <- traj_objfun(po, est=est, params=unlist(run_params))
-  
-  # create the sequential index for the loop
+
+  # Complete parameter vector needed to construct traj_objfun
+  init_params <- unlist(run_params)
+
+  # Supply valid initial values for all LHS-estimated parameters.
+  # These are subsequently replaced on every call to ofun().
+  init_params[est] <- as.numeric(lhs_params[1, est])
+
+  ofun <- traj_objfun(
+    po,
+    est = est,
+    params = init_params
+  )
+
   idx <- seq_len(nrow(lhs_params))
-  
+
   nll <- unlist(mclapply(
     idx,
     function(i) {
-      par_i <- setNames(as.numeric(lhs_params[i, est]), est)
+
+      par_i <- setNames(
+        as.numeric(lhs_params[i, est]),
+        est
+      )
+
       ofun(par = par_i)
     },
     mc.cores = core.count
   ))
-  
+
   nll
+
 }
 
 low.runs.parallel <- function(results, run_params, lhs_params, core.count, nll.prox = 10) {
@@ -1060,73 +1078,6 @@ for (idx in seq_len(scenario.count)) {
 }
 ```
 
-# Appendix Tables
-
-```{r appendix-tables, eval=FALSE}
-
-# Get the additional number of cases/deaths for the table
-
-death_1 = unname(sapply( run.results[[1]]$traj, function(t) { max(t$TotDeath) } ))
-# death_2 = unname(sapply( run.results[[2]]$traj, function(t) { max(t$TotDeath) } ))
-# death_3 = unname(sapply( run.results[[3]]$traj, function(t) { max(t$TotDeath) } ))
-# death_4 = unname(sapply( run.results[[4]]$traj, function(t) { max(t$TotDeath) } ))
-# death_5 = unname(sapply( run.results[[5]]$traj, function(t) { max(t$TotDeath) } ))
-# death_6 = unname(sapply( run.results[[6]]$traj, function(t) { max(t$TotDeath) } ))
-# death_7 = unname(sapply( run.results[[7]]$traj, function(t) { max(t$TotDeath) } ))
-# death_8 = unname(sapply( run.results[[8]]$traj, function(t) { max(t$TotDeath) } ))
-# death_9 = unname(sapply( run.results[[9]]$traj, function(t) { max(t$TotDeath) } ))
-
-symp_1 = unname(sapply( seq_along(run.results[[1]]$traj), function(run_idx) { (sum(run.results[[1]]$traj[[run_idx]]$Hsymp) * run.results[[1]]$res$rho[[run_idx]]) } ))
-# symp_2 = unname(sapply( seq_along(run.results[[2]]$traj), function(run_idx) { (sum(run.results[[2]]$traj[[run_idx]]$Hsymp) * run.results[[2]]$res$rho[[run_idx]]) } ))
-# symp_3 = unname(sapply( seq_along(run.results[[3]]$traj), function(run_idx) { (sum(run.results[[3]]$traj[[run_idx]]$Hsymp) * run.results[[3]]$res$rho[[run_idx]]) } ))
-# symp_4 = unname(sapply( seq_along(run.results[[4]]$traj), function(run_idx) { (sum(run.results[[4]]$traj[[run_idx]]$Hsymp) * run.results[[4]]$res$rho[[run_idx]]) } ))
-# symp_5 = unname(sapply( seq_along(run.results[[5]]$traj), function(run_idx) { (sum(run.results[[5]]$traj[[run_idx]]$Hsymp) * run.results[[5]]$res$rho[[run_idx]]) } ))
-# symp_6 = unname(sapply( seq_along(run.results[[6]]$traj), function(run_idx) { (sum(run.results[[6]]$traj[[run_idx]]$Hsymp) * run.results[[6]]$res$rho[[run_idx]]) } ))
-# symp_7 = unname(sapply( seq_along(run.results[[7]]$traj), function(run_idx) { (sum(run.results[[7]]$traj[[run_idx]]$Hsymp) * run.results[[7]]$res$rho[[run_idx]]) } ))
-# symp_8 = unname(sapply( seq_along(run.results[[8]]$traj), function(run_idx) { (sum(run.results[[8]]$traj[[run_idx]]$Hsymp) * run.results[[8]]$res$rho[[run_idx]]) } ))
-# symp_9 = unname(sapply( seq_along(run.results[[9]]$traj), function(run_idx) { (sum(run.results[[9]]$traj[[run_idx]]$Hsymp) * run.results[[9]]$res$rho[[run_idx]]) } ))
-
-mean(death_1)
-quantile(death_1, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_2)
-# quantile(death_2, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_3)
-# quantile(death_3, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_4)
-# quantile(death_4, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_5)
-# quantile(death_5, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_6)
-# quantile(death_6, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_7)
-# quantile(death_7, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_8)
-# quantile(death_8, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(death_9)
-# quantile(death_9, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-
-mean(symp_1)
-quantile(symp_1, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_2)
-# quantile(symp_2, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_3)
-# quantile(symp_3, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_4)
-# quantile(symp_4, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_5)
-# quantile(symp_5, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_6)
-# quantile(symp_6, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_7)
-# quantile(symp_7, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_8)
-# quantile(symp_8, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-# mean(symp_9)
-# quantile(symp_9, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-
-
-```
-
 # Plots
 
 ```{r plot-from-results}
@@ -1162,45 +1113,25 @@ for (idx in 1:scenario.count) {
     )
   }))
   
-  # band <- traj_df %>%
-  #   group_by(time) %>%
-  #   summarise(
-  #     mean = mean(obs_onset, na.rm = TRUE),
-  #     lo   = quantile(obs_onset, 0.025, na.rm = TRUE),
-  #     hi   = quantile(obs_onset, 0.975, na.rm = TRUE),
-  #     .groups = "drop"
-  #   )
-  # 
-  # # Independant axes
-  # ymax <- max(band$hi)
-  # if (ymax < 8) {
-  #   ymax <- 6 
-  # }
-  # # Same axes
-  # # ymax <- 45.7
-  # 
-  # cat(paste0("Ymax for this iteration: ", ymax, "\n"))
-  # # Cumulative plot data
-  #   # Rework the traj.plots
-  # traj.x.label <- ""
-  # traj.y.label <- ""
-  # if (idx == 4) {
-  #   traj.y.label = "daily cases"
-  # }
-  # if (idx == 8) {
-  #   traj.x.label = "day"
-  # }
-  # delay_labels    <- c(" 20d", " 60d", "120d")
-  # coverage_labels <- c("50%", "60%", "80%") 
-  # 
-  # row <- (idx - 1) %/% 3 + 1
-  # col <- (idx - 1) %% 3 + 1
-  # 
-  # traj.bands[[idx]] <- band %>%
-  #   mutate(
-  #     delay = factor(delay_labels[col], levels = delay_labels),
-  #     coverage = factor(coverage_labels[row], levels = coverage_labels)
-  #   )
+  band <- traj_df %>%
+    group_by(time) %>%
+    summarise(
+      mean = mean(obs_onset, na.rm = TRUE),
+      lo   = quantile(obs_onset, 0.025, na.rm = TRUE),
+      hi   = quantile(obs_onset, 0.975, na.rm = TRUE),
+      .groups = "drop"
+    )
+  delay_labels    <- c(" 20d", " 60d", "120d")
+  coverage_labels <- c("50%", "60%", "80%")
+  
+  row <- (idx - 1) %/% 3 + 1
+  col <- (idx - 1) %% 3 + 1
+  
+  traj.bands[[idx]] <- band %>%
+    mutate(
+      delay = factor(delay_labels[col], levels = delay_labels),
+      coverage = factor(coverage_labels[row], levels = coverage_labels)
+    )
   
   traj_cum <- traj_df %>%
     arrange(traj_id, time) %>%
@@ -1266,7 +1197,6 @@ row_plots <- lapply(levels(traj_data_frame$coverage), function(cov_lab) {
       name = NULL
     ) +
 
-    # geom_line(linewidth = 0.9) +
     geom_line(linewidth = 1.6) +
 
     coord_cartesian(
@@ -1308,12 +1238,8 @@ row_plots_no_legend <- lapply(
 
 
 ```{r graph-output}
-# plot.row.count = floor(sqrt(scenario.count))
-# plot.col.count = ceiling(scenario.count / plot.row.count)
-# plot.col.count = 3 # Constant column width
 plot.col.count = 3 # Constant column width (11x11 HEATMAP)
 plot.row.count = ceiling(scenario.count / plot.col.count)
-
 
 # Arrange the plots into one image
 ## Arrange plots in the first column and reserve a legend column
