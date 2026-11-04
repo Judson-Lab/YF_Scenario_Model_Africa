@@ -1,0 +1,147 @@
+---
+title: "YF Pomp South Sudan Model"
+author: "Seth Judson/Jeff Pennington"
+date: "2026-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE}
+library(pomp)
+
+# for the hypercube
+library(lhs)
+
+# for plotting
+library(dplyr)
+library(cowplot)
+library(grid)
+
+# for posterior analysis
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(viridis)
+
+# for parrallelization
+library(parallel)
+```
+
+## South Sudan Onset Data
+
+We pull the date of onset from the South Sudan data to get the number of symptomatic
+cases, which we are using as a proxy for newly symptomatic YF cases
+
+```{r parse-south-sudan-data, eval=FALSE}
+
+# Country specific variables
+country = "sudan"
+region.pop = 663235
+vacc_delay = 61
+vacc_cov = 0.5
+
+if (!exists("YF2023_sudan")) {
+  cat("Loading the South Sudan case data\n")
+  load("YF2023_sudan.RData")
+} else {
+  cat("Case data already loaded\n")
+}
+
+YF2023_sudan['combined'] = YF2023_sudan['cases_dead'] + YF2023_sudan['cases_alive']
+
+column = "combined"
+
+# The Savannah data is the date of presentation, while the South Sudan data is the count
+# per day, in order.
+
+blank.count = 1
+
+raw_onset_data = unlist(YF2023_sudan[column])
+
+onset_data = c(rep(0, blank.count), raw_onset_data, rep(0, 365-length(raw_onset_data)-blank.count))
+
+#Load TSI (temperature suitability index) components
+load("sudan_TSI.RData")
+
+# 1. Convert the 'date' column to actual Date objects
+# (Ensure the format matches your data, e.g., "%Y-%m-%d")
+sudan_TSI$date <- as.Date(sudan_TSI$date)
+
+# 2. Re-define the start date (now that the column is fixed)
+start_date <- min(sudan_TSI$date)
+
+# 3. NOW calculate the index
+# This will now produce numbers (0, 31, 61...) instead of an error
+sudan_TSI$time_idx <- as.numeric(sudan_TSI$date - start_date)
+
+# Check the result
+head(sudan_TSI$time_idx)
+
+#Step function for temperature dependent parameters
+# Ensure your data is sorted by date/time_idx
+sudan_TSI <- sudan_TSI[order(sudan_TSI$time_idx), ]
+
+# Create the step functions
+# f = 0 means: "For any time t between 0 and 31, use the value at 0."
+# rule = 2 means: "If t goes past the last date, just keep using the last value."
+
+mu_step_fun <- approxfun(x = sudan_TSI$time_idx, 
+                         y = sudan_TSI$mu, 
+                         method = "constant", 
+                         f = 0, 
+                         rule = 2)
+
+a_step_fun <- approxfun(x = sudan_TSI$time_idx, 
+                        y = sudan_TSI$a, 
+                        method = "constant", 
+                        f = 0, 
+                        rule = 2)
+
+sigma_step_fun <- approxfun(x = sudan_TSI$time_idx, 
+                            y = sudan_TSI$sigma_v,
+                            method = "constant", 
+                            f = 0, 
+                            rule = 2)
+```
+
+
+```{r execute-lhs}
+
+source("YF_Model_LHS.R")       # - Run the first stage LHS and define model
+                               #   execution functions
+source("YF_Model_LHS_Plots.R") # - Generate the first stage plots
+```
+
+# Weighted Resample
+After the baseline run, we want to do a weighted resample, so do that here
+
+```{r weighted-resample}
+df_kept <- as.data.frame(res_kept, stringsAsFactors = FALSE)
+
+# How many results to keep?
+n <- lhs.scenario.sample.count
+
+# Distribute the weights
+w <- 1 / exp(df_kept$nll)
+w <- w / sum(w)
+
+# Do the sampling
+sampled_idx <- sample.int(nrow(df_kept), size = n, replace = TRUE, prob = w)
+
+# Parse out the results
+sampled_kept <- df_kept[sampled_idx,]
+params_10k <- sampled_kept[, c("rho", "Iv0", "v_mult")]
+```
+
+# Execute either or both scenarios and generate plot results
+
+```{r execute-scenarios-heatmaps}
+
+# Comment-out unwanted analysis
+
+source ("YF_Model_Scenario.R")
+# source ("YF_Model_Heatmap.R")
+```

@@ -1,0 +1,160 @@
+---
+title: "YF Pomp Ghana Model"
+author: "Seth Judson/Jeff Pennington"
+date: "2026-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE}
+library(pomp)
+
+# for the hypercube
+library(lhs)
+
+# for plotting
+library(dplyr)
+library(cowplot)
+library(grid)
+
+# for posterior analysis
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(viridis)
+
+# for parrallelization
+library(parallel)
+```
+
+## Ghana Onset Data
+
+We pull the date of onset from the Savannah, Ghana data to get the number of 
+symptomatic cases, which we are using as a proxy for newly symptomatic YF cases
+
+```{r ghana-parse-savannah-data, eval=TRUE}
+
+# Country specific variables
+country = "ghana"
+region.pop = 653266
+vacc_delay = 22
+vacc_cov = 0.7
+
+if (!exists("YF2021_2022_savannah")) {
+  cat("Loading the Savannah case data\n")
+  load("YF2021_2022_savannah_date.RData")
+} else {
+  cat("Case data already loaded\n")
+}
+
+column = "DateOfOnset"
+
+presenting_dates = YF2021_2022_savannah_date[[column]]
+
+tab_all_dates <- function(x) {
+  stopifnot(inherits(x, "Date"))
+  
+  # counts for dates that appear
+  counts <- table(x)                 # names are "yyyy-mm-dd" as character
+  counts <- as.integer(counts)
+  names(counts) <- names(table(x))
+  
+  # full date range (includes dates not present)
+  full <- seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), by = "day")
+  out <- integer(length(full))
+  names(out) <- as.character(full)
+  
+  # fill observed counts into the full vector
+  out[names(counts)] <- counts
+  
+  out
+}
+
+d <- tab_all_dates(presenting_dates)
+
+blank.count = 1
+
+onset_data = c(rep(0, blank.count), d, rep(0, 365-length(d)-blank.count))
+
+#Load TSI (temperature suitability index) components
+load("savannah_TSI.RData")
+
+# Data Manipulation
+# 1. Convert the 'date' column to actual Date objects
+# (Ensure the format matches your data, e.g., "%Y-%m-%d")
+savannah_TSI$date <- as.Date(savannah_TSI$date)
+
+# 2. Re-define the start date (now that the column is fixed)
+start_date <- min(savannah_TSI$date)
+
+# 3. NOW calculate the index
+# This will now produce numbers (0, 31, 61...) instead of an error
+savannah_TSI$time_idx <- as.numeric(savannah_TSI$date - start_date)
+
+#Step function for temperature dependent parameters
+# Ensure your data is sorted by date/time_idx
+savannah_TSI <- savannah_TSI[order(savannah_TSI$time_idx), ]
+
+# Create the step functions
+# f = 0 means: "For any time t between 0 and 31, use the value at 0."
+# rule = 2 means: "If t goes past the last date, just keep using the last value."
+
+mu_step_fun <- approxfun(x = savannah_TSI$time_idx, 
+                         y = savannah_TSI$mu, 
+                         method = "constant", 
+                         f = 0, 
+                         rule = 2)
+
+a_step_fun <- approxfun(x = savannah_TSI$time_idx, 
+                        y = savannah_TSI$a, 
+                        method = "constant", 
+                        f = 0, 
+                        rule = 2)
+
+sigma_step_fun <- approxfun(x = savannah_TSI$time_idx, 
+                            y = savannah_TSI$sigma_v,
+                            method = "constant", 
+                            f = 0, 
+                            rule = 2)
+```
+
+```{r execute-lhs}
+
+source("YF_Model_LHS.R")       # - Run the first stage LHS and define model
+                               #   execution functions
+source("YF_Model_LHS_Plots.R") # - Generate the first stage plots
+```
+
+# Weighted Resample
+After the baseline run, we want to do a weighted resample, so do that here
+
+```{r weighted-resample}
+df_kept <- as.data.frame(res_kept, stringsAsFactors = FALSE)
+
+# How many results to keep?
+n <- lhs.scenario.sample.count
+
+# Distribute the weights
+w <- 1 / exp(df_kept$nll)
+w <- w / sum(w)
+
+# Do the sampling
+sampled_idx <- sample.int(nrow(df_kept), size = n, replace = TRUE, prob = w)
+
+# Parse out the results
+sampled_kept <- df_kept[sampled_idx,]
+params_10k <- sampled_kept[, c("rho", "Iv0", "v_mult")]
+```
+
+# Execute either or both scenarios and generate plot results
+
+```{r execute-scenarios-heatmaps}
+
+# Comment-out unwanted analysis
+
+source ("YF_Model_Scenario.R")
+# source ("YF_Model_Heatmap.R")
+```
