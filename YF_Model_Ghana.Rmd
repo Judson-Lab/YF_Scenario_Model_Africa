@@ -35,7 +35,7 @@ library(parallel)
 We pull the date of onset from the Savannah, Ghana data to get the number of 
 symptomatic cases, which we are using as a proxy for newly symptomatic YF cases
 
-```{r ghana-parse-savannah-data, eval=TRUE}
+```{r ghana-parse-savannah-data}
 
 # Country specific variables
 country = "ghana"
@@ -126,6 +126,14 @@ sigma_step_fun <- approxfun(x = savannah_TSI$time_idx,
 source("YF_Model_LHS.R")       # - Run the first stage LHS and define model
                                #   execution functions
 source("YF_Model_LHS_Plots.R") # - Generate the first stage plots
+```
+
+# Stage one convergence analysis
+
+```{r stage1-convergence-analysis}
+
+source("YF_Model_Stage1_Convergence.R")
+
 ```
 
 # Weighted Resample

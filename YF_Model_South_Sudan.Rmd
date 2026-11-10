@@ -35,7 +35,7 @@ library(parallel)
 We pull the date of onset from the South Sudan data to get the number of symptomatic
 cases, which we are using as a proxy for newly symptomatic YF cases
 
-```{r parse-south-sudan-data, eval=FALSE}
+```{r parse-south-sudan-data}
 
 # Country specific variables
 country = "sudan"
@@ -113,6 +113,14 @@ sigma_step_fun <- approxfun(x = sudan_TSI$time_idx,
 source("YF_Model_LHS.R")       # - Run the first stage LHS and define model
                                #   execution functions
 source("YF_Model_LHS_Plots.R") # - Generate the first stage plots
+```
+
+# Stage one convergence analysis
+
+```{r stage1-convergence-analysis}
+
+source("YF_Model_Stage1_Convergence.R")
+
 ```
 
 # Weighted Resample
