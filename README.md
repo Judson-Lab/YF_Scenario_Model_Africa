@@ -7,13 +7,15 @@ This article is currently under submission. Please contact Seth Judson, MD, MHS 
 
 
 Data files: 
-YF2021_2022_savannah_date.Rdata (Ghana cases)
+YF2021_2022_savannah_date.Rdata (Ghana cases) &
 YF2023_2024_sudan.xlsx (South Sudan cases)
 
 Temperature-dependent mosquito parameters:
-YF_TSI_Ghana.Rmd
+YF_TSI_Ghana.Rmd &
 YF_TSI_Sudan.Rmd
 
-Models:
-YF_Model_Ghana.Rmd
+Main Modeling Files:
+YF_Model_Ghana.Rmd &
 YF_Model_South_Sudan.Rmd
+
+These Rmd files use the LHS, Scenario, and Heatmap R files
