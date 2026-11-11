@@ -67,14 +67,12 @@ onset_data = c(rep(0, blank.count), raw_onset_data, rep(0, 365-length(raw_onset_
 load("sudan_TSI.RData")
 
 # 1. Convert the 'date' column to actual Date objects
-# (Ensure the format matches your data, e.g., "%Y-%m-%d")
 sudan_TSI$date <- as.Date(sudan_TSI$date)
 
-# 2. Re-define the start date (now that the column is fixed)
+# 2. Re-define the start date
 start_date <- min(sudan_TSI$date)
 
-# 3. NOW calculate the index
-# This will now produce numbers (0, 31, 61...) instead of an error
+# 3. Calculate the index
 sudan_TSI$time_idx <- as.numeric(sudan_TSI$date - start_date)
 
 # Check the result
@@ -119,12 +117,6 @@ source("YF_Model_LHS_Plots.R") # - Generate the first stage plots
 
 ```{r stage1-convergence-analysis}
 
-# Note: Since running the stage1 convergence analysis uses the random number
-# generator, the subsequent stage2 sampling is perturbed and results in a
-# perturbed but still consistent result.  To view the stage1 convergence
-# analysis, please uncomment the following line, but leave it commented to
-# obtain our paper's exact results.
-
 #source("YF_Model_Stage1_Convergence.R")
 
 ```
@@ -156,8 +148,6 @@ params_10k <- sampled_kept[, c("rho", "Iv0", "v_mult")]
 
 # Comment-out unwanted analysis
 
-# 9 Scenario Analysis
-source ("YF_Model_Scenario.R")
-# Heatmap generation
-source ("YF_Model_Heatmap.R")
+#source ("YF_Model_Scenario.R")
+ source ("YF_Model_Heatmap.R")
 ```
