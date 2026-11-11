@@ -132,7 +132,13 @@ source("YF_Model_LHS_Plots.R") # - Generate the first stage plots
 
 ```{r stage1-convergence-analysis}
 
-source("YF_Model_Stage1_Convergence.R")
+# Note: Since running the stage1 convergence analysis uses the random number
+# generator, the subsequent stage2 sampling is perturbed and results in a
+# perturbed but still consistent result.  To view the stage1 convergence
+# analysis, please uncomment the following line, but leave it commented to
+# obtain our paper's exact results.
+
+#source("YF_Model_Stage1_Convergence.R")
 
 ```
 
@@ -163,6 +169,8 @@ params_10k <- sampled_kept[, c("rho", "Iv0", "v_mult")]
 
 # Comment-out unwanted analysis
 
+# 9 Scenario Analysis
 source ("YF_Model_Scenario.R")
-# source ("YF_Model_Heatmap.R")
+# Heatmap generation
+source ("YF_Model_Heatmap.R")
 ```
