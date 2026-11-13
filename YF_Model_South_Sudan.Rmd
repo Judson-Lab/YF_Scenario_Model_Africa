@@ -66,7 +66,7 @@ onset_data = c(rep(0, blank.count), raw_onset_data, rep(0, 365-length(raw_onset_
 #Load TSI (temperature suitability index) components
 load("sudan_TSI.RData")
 
-# 1. Convert the 'date' column to actual Date objects
+# 1. Convert to date objects
 sudan_TSI$date <- as.Date(sudan_TSI$date)
 
 # 2. Re-define the start date
@@ -79,12 +79,8 @@ sudan_TSI$time_idx <- as.numeric(sudan_TSI$date - start_date)
 head(sudan_TSI$time_idx)
 
 #Step function for temperature dependent parameters
-# Ensure your data is sorted by date/time_idx
+# Ensure data is sorted by date/time_idx
 sudan_TSI <- sudan_TSI[order(sudan_TSI$time_idx), ]
-
-# Create the step functions
-# f = 0 means: "For any time t between 0 and 31, use the value at 0."
-# rule = 2 means: "If t goes past the last date, just keep using the last value."
 
 mu_step_fun <- approxfun(x = sudan_TSI$time_idx, 
                          y = sudan_TSI$mu, 

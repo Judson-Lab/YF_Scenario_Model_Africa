@@ -36,7 +36,7 @@ a_Tmax <- 40.13     # Thermal maximum
 # Biting rate (a) calculation
 a <- a_c * temp * (temp - a_Tmin) * sqrt(pmax(0, a_Tmax - temp)) #Brière thermal response
 
-# Use the variables for the cutoff to ensure consistency
+# Use the variables for the cutoff
 a <- ifelse(temp > a_Tmin & temp < a_Tmax, a, 0)
   
 
@@ -64,7 +64,7 @@ sigma_v = ifelse(temp <= tmin_eip | temp >= tmax_eip, 0, sigma_v)
 # Total TSI
 tsi_val <- ifelse(sigma_v > 0 & a > 0, (a^2 * exp(-mu / sigma_v)) / mu, 0)
   
- # Return all components for graphing
+ # Return all components 
   return(data.frame(
     a = a,
     mu = mu,
@@ -82,107 +82,11 @@ sudan_TSI <- sudan_climate %>%
   rowwise() %>%
   reframe(date = date, T = T, calculate_tsi(T))
 
-# View the first few rows to confirm columns (a, mu, TSI) are added
+# View the first few rows
 head(sudan_TSI)
     ```
     
     
-```{r}
-library(scales)
-library(lubridate)
-```
-
-
-
-
-```{r}
-sudan_TSI %>%
-  # 1. Convert the character column to a real Date object
-  mutate(date = ymd(date)) %>% 
-  select(date, a, mu, sigma_v) %>%
-  pivot_longer(-date, names_to = "Component", values_to = "Value") %>%
-  ggplot(aes(x = date, y = Value, color = Component)) +
-  geom_line() +
-  facet_wrap(~Component, scales = "free_y", ncol = 1) +
-  scale_x_date(
-    date_breaks = "1 month",
-    date_labels = "%b %d, %Y"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  ) +
-  labs(title = "Biological Drivers of TSI", x = "Date")
-```
-
-```{r}
-sudan_TSI_plot <- sudan_TSI %>%
-  # 1. Convert date to actual Date class to ensure lines connect correctly
-  mutate(date = ymd(date)) %>% 
-  select(date, a, mu, sigma_v) %>%
-  pivot_longer(-date, names_to = "Component", values_to = "Value") %>%
-  ggplot(aes(x = date, y = Value, color = Component)) +
-  # 2. Add the line first
-  geom_line(linewidth = 0.5) + 
-  # 3. Add the points on top
-  geom_point(size = 2) + 
-  facet_wrap(~Component, scales = "free_y", ncol = 1) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none" # Optional: hide legend since facets are labeled
-  ) +
-  labs(title = "Biological Drivers of TSI", x = "Date", y = "Value")
-```
-
-```{r}
-plot(sudan_TSI_plot)
-```
-
-```{r}
-#Save the plot as a TIFF
-ggsave(
-  filename = "sudan_TSI_components.tiff",
-  plot = sudan_TSI_plot,
-  width = 8,       # Width in inches
-  height = 10,     # Height in inches (tall because of 3 facets)
-  dpi = 300,       
-  bg = "white"
-)
-```
-
-
-
-```{r}
-#Graph the TSI (Transmission Suitability)
-sudan_TSI_plot2 <-sudan_TSI %>%
-  mutate(date = ymd(date)) %>% 
-  ggplot(aes(x = date, y = TSI)) +  
-  geom_line(color = "firebrick", linewidth = 1) +
-  labs(title = "Yellow Fever Transmission Suitability (TSI)",
-       subtitle = "Savannah Climate: Calculated from Aedes aegypti parameters",
-       y = "Index Value", x = "Date") +
-  theme_minimal()
-```
-
-```{r}
-plot(sudan_TSI_plot2)
-```
-
-
-```{r}
-#Save the plot as a TIFF
-ggsave(
-  filename = "savannah_TSI.tiff",
-  plot = savannah_TSI_plot2,
-  width = 8,       # Width in inches
-  height = 6,     # Height in inches
-  dpi = 300,       
-  bg = "white"
-)
-```
-
 
 ```{r}
 save(sudan_TSI, file = "sudan_TSI.RData")
